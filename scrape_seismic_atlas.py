@@ -3,7 +3,17 @@
 """
 Created on Sat Apr 19 20:37:13 2014
 
-@author: wassname
+This script will download files from http://see-atlas.leeds.ac.uk:808, then append
+ a url name and caption to them. This is designed to run on linux and requires 
+ a few unique modules such as gdshortener and also imagemagik installed and in the path.
+ 
+A few option are set in the file, base url, lim url, high res?, and draft?. 
+Images and info is scraped from the main site and images are downloaded to the 
+current directory, only if they do not alread exist.
+
+Captions are appended to image using calls to imagemagik on the command line. This is because PIL wasn't worked as desired.
+
+@author: wassname [located_at] wassname (dot) org
 """
 
 
@@ -33,6 +43,9 @@ else:
 import bs4
 import requests
 import re
+import gdshortener
+from PIL import Image
+import os
 #create a session object that'll allow us to track the cookies across the session and raise
 # too much suspicion
 s = requests.session()
@@ -76,36 +89,42 @@ while not done:
         if draft: break
     else:
          done=True
-
-#print the list of image links
-#print image_links
-
+    
+print "Finished scaping, qeueing {} image downloads".format(len(image_links))
 
     
 def wget(url,file_name=None):
     # not working
     '''http://stackoverflow.com/questions/22676/how-do-i-download-a-file-over-http-using-python'''
 
-    r = s.get(url) 
-    if not file_name: file_name = r.raw.getheaders()['content-disposition'].split('=')[1]
+    try:
+        r = s.get(url) 
+    except: # in case of "Max retries exceeded with url"
+        s = requests.session()
+        r = s.get(url) 
+    try:
+        image_name= r.raw.getheaders()['content-disposition'].split('=')[1]
+    except:
+        image_name='im.jpg'
+    if file_name==None:
+        file_name=image_name
+    else:
+        file_name=file_name+'.'+image_name.split('.')[1]
+        
     f = open(file_name, 'wb')
-    #file_size = int(r.raw.getheaders()['content-length'])
-    print "Downloading: %s" % (file_name)
+    try:
+        file_size = int(r.raw.getheaders()['content-length'])
+        print "Downloading: %s (%s MB)" % (file_name,file_size*9.53674e-7)
+    except:
+        print "Downloading: %s" % (file_name)
     f.write(requests.get(url).content)    
     f.close()
+    return file_name
 
 def increase_last_char(c,inc=1):
     '''This increases the last charector on a string by 1, e.g. 09000064800112fc-> 09000064800112fd or 54 -> 55'''
     c=c[:-1]+chr(ord(c[-1])+inc)
     return c
-
-#for image_link in image_links:
-#    image_link2=increase_last_char(image_link['id'],inc=2) # this increases the last charector by 1
-#    url=base_url+r'/docbaseContent?asAttachment=false&objectId={}&version=CURRENT&vs=1'.format(image_link2)
-#    wget_with_progress_bar(url)
-    
-print "Finished scaping, qeueing {} image downloads".format(len(image_links))
-    
 
    
 
@@ -121,49 +140,35 @@ def safe_filename(s):
     return s
     
 
-# now download images, i have to iterate the last number or digit by 1! to get high res and 2 for low res!
+# now download images,then write a caption under them
+#  i have to iterate the last number or digit by 1! to get high res and 2 for low res!
 # high res http://see-atlas.leeds.ac.uk:8080/docbaseContent?asAttachment=false&objectId=090000648001b0d3&version=CURRENT&vs=1
 # lowres   http://see-atlas.leeds.ac.uk:8080/docbaseContent?asAttachment=false&objectId=090000648001b0d4&version=CURRENT&vs=1
 # let us queue the downloads
 
 if draft: image_links=image_links[:5]
-#import tinyurl
-import gdshortener
 sg = gdshortener.ISGDShortener()
-import Image
-import ImageFont, ImageDraw
-for image_link in image_links[46:]:
+
+for image_link in image_links:
     image_link2=increase_last_char(image_link['id'],inc=inc) # this increases the last charector by 1
     url=base_url+r'/docbaseContent?asAttachment=false&objectId={}&version=CURRENT&vs=1'.format(image_link2)
-    file_name = safe_filename(image_link['title'])+'.jpg'
-    print "Download %s as %s" % (url, file_name)
-    wget(url,file_name=file_name)
-
-    # now do I also want to write on them?
-    # the bastract is to long so just a tinyurl
-    # first register tinyurl
+    file_name = safe_filename(image_link['title'])
     
+    # check if its already there
+    if os.path.isfile(file_name+'.jpg'):
+        print "File already exists", file_name+'.jpg'
+        continue
+
+    print "Download %s as %s" % (url, file_name)
+    file_name=wget(url,file_name=file_name) # download image
+
+
+    # write caption under image
+    # first register tinyurl
     tnyurl=sg.shorten(url = base_url+image_link['href'])[0].replace('http://','')
-    # http://stackoverflow.com/questions/245447/how-do-i-draw-text-at-an-angle-using-pythons-pil
-    # now draw it on the image
 
     print "Drawing on image"
     
-    # use python to draw an image, but it is overlayed and I cannot get the size right
-#    im=Image.open(file_name)
-#    
-#    try:
-#        f = ImageFont.truetype("usr/share/fonts/truetype/droid/DroidSansMono.ttf",15)
-#        #"/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"
-#    except:
-#        f = ImageFont.load_default()
-#    
-#    txt=Image.new('L', (130,int(15*1.3)),color=255)
-#    d = ImageDraw.Draw(txt)
-#    d.text( (0, 0), tnyurl,  font=f, fill=0)
-#    #txt=txt.rotate(17.5,  expand=1)
-#    im.paste( txt, (0,0))
-#    im.save(file_name)
 
     # lets format the caption, we have to worry about escaping, and line wrapping
     import textwrap
@@ -175,41 +180,22 @@ for image_link in image_links[46:]:
     caption=caption.replace(':\n',':').replace('"','') # some formating and escaping
     
     b=textwrap.wrap(image_link['abstract'].strip().replace(u'\xa0', u' ').replace(':\n',':').replace('\n',',\t'),width=lwidth) # wrap lines that are longer than width
-    caption='link:'+tnyurl+',\t'+'\n'.join(b) # add it all together
+    caption='link:'+tnyurl+',\n'+'\n'.join(b) # add it all together
     caption=caption.replace('"','').expandtabs().decode('ascii',"ignore").encode('ascii','ignore') # some formating and escaping
     
-    # now add a caption using imagemagik
-    from subprocess import call 
-    import subprocess
-    #call(['convert', file_name   ,'-background','white',"label:{}".format(caption),'-gravity','Center','-append',file_name])
-    
+    # now write it using imagemagic
     # a 3rd way? http://stackoverflow.com/questions/4106200/overlaying-an-images-filename-using-imagemagick-or-similar
-    #width=subprocess.check_output('img={}'.format(file_name)).strip() # set gilename in bash
-    width=int(subprocess.check_output(['identify','-format','%W','"{}"'.format(file_name)]).strip())
-    #call(['convert',
-    #'-background white',
-    #'-gravity center',
-    #'-fill black',
-    #'-size ${width}x100',
-    #'caption:"{}"'.format(caption),
-    #'"{}"'.format(file_name),
-    #'+swap',
-    #'-gravity south',
-    #'-pointsize 24',
-    #'-composite',
-    #'"with-caption-{}" '.format(file_name)])
-    #
-    #call(['convert',
-    #'"${img}"',
-    #'-fill black',
-    #'-undercolor',
-    #'"#0008"',
-    #'-pointsize 24',
-    #'-gravity south',
-    #'-annotate +0+5 "{}" '.format(caption),
-    #'"with-annotate-${img}" '])
-    
-    # 3rd try is the charm, this actually uses fontsize yay
-    call(['montage','-label', '"{}"'.format(caption),'-pointsize', '{}'.format(width/lwidth*4) ,'{}'.format(file_name),'-geometry +0+0 -background Gold','"with-montage-{}"'.format(file_name)])
+    try:
+        img = Image.open(file_name)
+    except:
+        print "Could not open image", file_name
+        continue
+    width, height = img.size
+
+    try:
+        os.system(' '.join(['montage','-label', '"{}"'.format(caption),'"{}"'.format(file_name),'-pointsize', '{}'.format(int(width/lwidth*2)) ,'-geometry','+0+0','-background','White','"{}"'.format(file_name)]))
+    except:
+        print "Could not add caption to image", file_name, ' '.join(['montage','-label', '"{}"'.format(caption),'"{}"'.format(file_name),'-pointsize', '{}'.format(int(width/lwidth*2)) ,'-geometry','+0+0','-background','White','"{}"'.format(file_name)])
+        continue
     
     
